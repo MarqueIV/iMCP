@@ -65,11 +65,13 @@ final class RemindersService: Service {
                             "If true, fetch completed reminders; if false, fetch incomplete; if omitted, fetch all"
                     ),
                     "start": .string(
-                        description: "Start date range for fetching reminders",
+                        description:
+                            "Start date/time range for fetching reminders. If timezone is omitted, local time is assumed. Date-only uses local midnight.",
                         format: .dateTime
                     ),
                     "end": .string(
-                        description: "End date range for fetching reminders",
+                        description:
+                            "End date/time range for fetching reminders. If timezone is omitted, local time is assumed. Date-only uses local midnight.",
                         format: .dateTime
                     ),
                     "lists": .array(
@@ -101,7 +103,7 @@ final class RemindersService: Service {
 
             // Filter reminder lists based on provided names
             var reminderLists = self.eventStore.calendars(for: .reminder)
-            if case let .array(listNames) = arguments["lists"],
+            if case .array(let listNames) = arguments["lists"],
                 !listNames.isEmpty
             {
                 let requestedNames = Set(
@@ -114,17 +116,36 @@ final class RemindersService: Service {
             // Parse dates if provided
             var startDate: Date? = nil
             var endDate: Date? = nil
+            var startIsDateOnly = false
+            var endIsDateOnly = false
 
-            if case let .string(start) = arguments["start"] {
-                startDate = ISO8601DateFormatter.parseFlexibleISODate(start)
+            if case .string(let start) = arguments["start"],
+                let parsedStart = ISO8601DateFormatter.parsedLenientISO8601Date(
+                    fromISO8601String: start)
+            {
+                startDate = parsedStart.date
+                startIsDateOnly = parsedStart.isDateOnly
             }
-            if case let .string(end) = arguments["end"] {
-                endDate = ISO8601DateFormatter.parseFlexibleISODate(end)
+            if case .string(let end) = arguments["end"],
+                let parsedEnd = ISO8601DateFormatter.parsedLenientISO8601Date(
+                    fromISO8601String: end)
+            {
+                endDate = parsedEnd.date
+                endIsDateOnly = parsedEnd.isDateOnly
+            }
+
+            let calendar = Calendar.current
+            if let startDateValue = startDate {
+                startDate = calendar.normalizedStartDate(
+                    from: startDateValue, isDateOnly: startIsDateOnly)
+            }
+            if let endDateValue = endDate {
+                endDate = calendar.normalizedEndDate(from: endDateValue, isDateOnly: endIsDateOnly)
             }
 
             // Create predicate based on completion status
             let predicate: NSPredicate
-            if case let .bool(completed) = arguments["completed"] {
+            if case .bool(let completed) = arguments["completed"] {
                 if completed {
                     predicate = self.eventStore.predicateForCompletedReminders(
                         withCompletionDateStarting: startDate,
@@ -154,7 +175,7 @@ final class RemindersService: Service {
             var filteredReminders = reminders
 
             // Filter by search text if provided
-            if case let .string(searchText) = arguments["query"],
+            if case .string(let searchText) = arguments["query"],
                 !searchText.isEmpty
             {
                 filteredReminders = filteredReminders.filter {
@@ -172,6 +193,8 @@ final class RemindersService: Service {
                 properties: [
                     "title": .string(),
                     "due": .string(
+                        description:
+                            "Due date/time for the reminder. If timezone is omitted, local time is assumed. Date-only uses local midnight.",
                         format: .dateTime
                     ),
                     "list": .string(
@@ -209,7 +232,7 @@ final class RemindersService: Service {
             let reminder = EKReminder(eventStore: self.eventStore)
 
             // Set required properties
-            guard case let .string(title) = arguments["title"] else {
+            guard case .string(let title) = arguments["title"] else {
                 throw NSError(
                     domain: "RemindersError", code: 2,
                     userInfo: [NSLocalizedDescriptionKey: "Reminder title is required"]
@@ -219,7 +242,7 @@ final class RemindersService: Service {
 
             // Set calendar (list)
             var calendar = self.eventStore.defaultCalendarForNewReminders()
-            if case let .string(listName) = arguments["list"] {
+            if case .string(let listName) = arguments["list"] {
                 if let matchingCalendar = self.eventStore.calendars(for: .reminder)
                     .first(where: { $0.title.lowercased() == listName.lowercased() })
                 {
@@ -229,25 +252,31 @@ final class RemindersService: Service {
             reminder.calendar = calendar
 
             // Set optional properties
-            if case let .string(dueDateStr) = arguments["due"],
-                let dueDate = ISO8601DateFormatter.parseFlexibleISODate(dueDateStr)
+            if case .string(let dueDateStr) = arguments["due"],
+                let parsedDueDate = ISO8601DateFormatter.parsedLenientISO8601Date(
+                    fromISO8601String: dueDateStr)
             {
-                reminder.dueDateComponents = Calendar.current.dateComponents(
+                let calendar = Calendar.current
+                let dueDate = calendar.normalizedStartDate(
+                    from: parsedDueDate.date,
+                    isDateOnly: parsedDueDate.isDateOnly
+                )
+                reminder.dueDateComponents = calendar.dateComponents(
                     [.year, .month, .day, .hour, .minute, .second], from: dueDate)
             }
 
-            if case let .string(notes) = arguments["notes"] {
+            if case .string(let notes) = arguments["notes"] {
                 reminder.notes = notes
             }
 
-            if case let .string(priorityStr) = arguments["priority"] {
+            if case .string(let priorityStr) = arguments["priority"] {
                 reminder.priority = Int(EKReminderPriority.from(string: priorityStr).rawValue)
             }
 
             // Set alarms
-            if case let .array(alarmMinutes) = arguments["alarms"] {
+            if case .array(let alarmMinutes) = arguments["alarms"] {
                 reminder.alarms = alarmMinutes.compactMap {
-                    guard case let .int(minutes) = $0 else { return nil }
+                    guard case .int(let minutes) = $0 else { return nil }
                     return EKAlarm(relativeOffset: TimeInterval(-minutes * 60))
                 }
             }
