@@ -257,14 +257,20 @@ final class ServerController: ObservableObject {
 
                 // Create a continuation to wait for the user's response
                 return await withCheckedContinuation { continuation in
+                    let resumeGate = ResumeGate()
+                    let resumeOnce: (Bool) async -> Void = { value in
+                        guard await resumeGate.shouldResume() else { return }
+                        continuation.resume(returning: value)
+                    }
+
                     Task { @MainActor in
                         self.showConnectionApprovalAlert(
                             clientID: clientInfo.name,
                             approve: {
-                                continuation.resume(returning: true)
+                                Task { await resumeOnce(true) }
                             },
                             deny: {
-                                continuation.resume(returning: false)
+                                Task { await resumeOnce(false) }
                             }
                         )
                     }
