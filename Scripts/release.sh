@@ -380,6 +380,21 @@ commit_and_tag() {
   git tag -a "${VERSION}" -m "Release ${VERSION}"
 }
 
+push_tags() {
+  require_version
+  if ! git rev-parse --verify "refs/tags/${VERSION}" >/dev/null 2>&1; then
+    echo "Missing tag: ${VERSION}" >&2
+    exit 1
+  fi
+  local response=""
+  read -r -p "Push tags to origin? [y/N] " response
+  if [[ "${response}" != "y" && "${response}" != "Y" ]]; then
+    echo "Tag push cancelled."
+    exit 1
+  fi
+  git push --tags
+}
+
 create_release() {
   require_version
   echo "Creating GitHub release ${VERSION}"
@@ -394,8 +409,12 @@ upload_asset() {
     echo "Missing release asset: ${release_zip_path}" >&2
     exit 1
   fi
-  echo "Uploading release asset ${release_zip_path}"
-  gh release upload "${VERSION}" "${release_zip_path}" --clobber
+  local upload_path="${DIST_DIR}/${APP_NAME}.zip"
+  if [[ "${release_zip_path}" != "${upload_path}" ]]; then
+    cp -f "${release_zip_path}" "${upload_path}"
+  fi
+  echo "Uploading release asset ${upload_path}"
+  gh release upload "${VERSION}" "${upload_path}" --clobber
   gh release view --web "${VERSION}"
 }
 
@@ -410,6 +429,7 @@ all() {
   notarize
   staple
   commit_and_tag
+  push_tags
   create_release
   upload_asset
 }
@@ -453,6 +473,9 @@ case "${COMMAND}" in
     ;;
   commit)
     commit_and_tag
+    ;;
+  push-tags)
+    push_tags
     ;;
   release)
     release
